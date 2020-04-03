@@ -1,0 +1,167 @@
+heat_template_version: '2016-10-14'
+
+description: >
+  Sets up one linux server and two windows servers for use in practicing Splunk deployments
+parameters:
+
+  lin_name:
+    type: string
+    default: linux_serv
+  lin_image:
+    type: string
+    default: "Ubuntu 16.04"
+
+  win1_name:
+    type: string
+    default: win1_name
+  win1_image:
+    type: string
+    default: "Windows Server 2019"
+
+  win2_name:
+    type: string
+    default: win2_name
+  win2_image:
+    type: string
+    default: "Windows Server 2019"
+
+  username:
+    type: string
+    default: user
+  password:
+    type: string
+    hidden: true
+    default: pass
+
+resources:
+
+# admin net
+
+  network:
+    type: OS::Neutron::Net
+    properties:
+      name: network
+      port_security_enabled: false
+
+  router:
+    type: OS::Neutron::Router    
+    properties:
+      name: router
+      external_gateway_info:
+        network: public
+
+  router_interface:
+    type:  OS::Neutron::RouterInterface
+    properties:
+      router: { get_resource: router }
+      subnet: { get_resource: subnet }
+
+  subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      cidr: 192.168.100.0/24
+      network: { get_resource: network }
+      name: subnet
+      dns_nameservers: [ "10.50.255.254" ]
+      gateway_ip: 192.168.100.1
+
+# monitor net
+
+  mon_network:
+    type: OS::Neutron::Net
+    properties:
+      name: mon_network
+      port_security_enabled: false
+
+  mon_router:
+    type: OS::Neutron::Router    
+    properties:
+      name: mon_router
+      external_gateway_info:
+        network: public
+
+  mon_router_interface:
+    type:  OS::Neutron::RouterInterface
+    properties:
+      router: { get_resource: mon_router }
+      subnet: { get_resource: mon_subnet }
+
+  mon_subnet:
+    type: OS::Neutron::Subnet
+    properties:
+      cidr: 10.0.10.0/24
+      network: { get_resource: mon_network }
+      name: subnet
+      dns_nameservers: [ "10.50.255.254" ]
+      gateway_ip: 10.0.10.1
+
+  host1:
+    type: OS::Nova::Server
+    properties:
+      name: 
+        str_replace:
+          template: |
+            $lin1
+          params:
+            $inst_name: { get_param: lin_name }
+      image: { get_param: lin_image }
+      flavor: mem.es2
+      networks: 
+        - network: { get_resource: network }
+          fixed_ip: 192.168.100.10
+        - network: { get_resource: mon_network }
+      user_data_format: RAW
+      user_data: { get_resource: lin_config }
+
+
+  host2:
+    type: OS::Nova::Server
+    properties:
+      name: 
+        str_replace:
+          template: |
+            $win1
+          params:
+            $inst_name: { get_param: win1_name }
+      image: { get_param: win1_image }
+      flavor: mem.es1
+      networks: 
+        - network: { get_resource: network }
+          fixed_ip: 192.168.100.11
+        - network: { get_resource: mon_network }
+      admin_pass: { get_param: password }
+
+  host3:
+    type: OS::Nova::Server
+    properties:
+      name: 
+        str_replace:
+          template: |
+            $win2
+          params:
+            $inst_name: { get_param: win2_name }
+      image: { get_param: win2_image }
+      flavor: mem.es1
+      networks: 
+        - network: { get_resource: network }
+          fixed_ip: 192.168.100.12
+        - network: { get_resource: mon_network }
+      admin_pass: { get_param: password }
+
+
+  lin_config:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      config:
+        str_replace:
+          template: |
+            #!/bin/bash
+            export DEBIAN_FRONTEND=noninteractive
+            echo 127.0.0.1 $(hostname) >> /etc/hosts
+            useradd $username -m -U -s /bin/bash
+            echo "$username:$password" | chpasswd
+            usermod -aG sudo $username
+            shutdown -r now
+          params:
+            $username: { get_param: username }
+            $password: { get_param: password }
